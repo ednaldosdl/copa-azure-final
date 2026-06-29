@@ -249,6 +249,10 @@ jobs:
           # Identidade CLIENTE via CIAM (ADE-007 Inv 1/2) — authority ciamlogin.com.
           VITE_CIAM_AUTHORITY: ${{ vars.VITE_CIAM_AUTHORITY }}
           VITE_CIAM_CLIENT_ID: ${{ vars.VITE_CIAM_CLIENT_ID }}
+          # Identidade ADMIN workforce via Entra (App Role Admin) — login da área /admin.
+          VITE_ADMIN_TENANT_ID: ${{ vars.VITE_ADMIN_TENANT_ID }}
+          VITE_ADMIN_CLIENT_ID: ${{ vars.VITE_ADMIN_CLIENT_ID }}
+          VITE_ADMIN_SCOPE: ${{ vars.VITE_ADMIN_SCOPE }}
           # Gateway YARP v2 que o front chama com o Bearer CIAM.
           VITE_GATEWAY_V2_URL: ${{ vars.GATEWAY_V2_URL }}
           # Backend v1 same-origin (comparação didática — intocado).
