@@ -27,6 +27,10 @@ var host = new HostBuilder()
         // SQL purchase repository (parameterized queries via Dapper + Microsoft.Data.SqlClient).
         services.AddSingleton<IPurchaseRepository, PurchaseRepository>();
 
+        // Story 3.5 (ADE-007 Inv 8) — repositório de users para o resolve-or-provision do
+        // GET /api/v2/me (unificação base v1 ↔ CIAM). Mesmo padrão Dapper + SqlClient.
+        services.AddSingleton<IUserRepository, UserRepository>();
+
         // Story 2.4 (F4) — webhook fire-and-forget ao n8n após gravar a compra.
         // Typed HttpClient via IHttpClientFactory (gestão correta de sockets/pooling).
         // O timeout efetivo (5s) é controlado pelo próprio notifier via CancellationToken

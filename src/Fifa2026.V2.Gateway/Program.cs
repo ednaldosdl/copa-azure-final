@@ -23,6 +23,15 @@ const string RateLimiterPolicy = "fixed";              // partição fixed-windo
 const string CorsPolicy = "frontend";                   // origin restrito ao front (AC-7)
 const string CorrelationHeader = "X-Correlation-ID";    // ADE-000 Inv 5 / AC-8
 const string EntraOidHeader = "X-Entra-OID";            // Story 2.3 AC-7 / ADE-005 Inv 4
+// Story 3.5 (ADE-007 v1.2 Inv 8) — claims email/name do token CIAM propagados ADITIVAMENTE
+// (mesmo padrão de X-Entra-OID) para o resolve-or-provision do GET /api/v2/me. São PII —
+// injetados, NUNCA logados (Inv 8 flag (c)). A Function os usa só no arm de INSERT (nato-CIAM).
+const string EntraEmailHeader = "X-Entra-Email";
+const string EntraNameHeader = "X-Entra-Name";
+// M-1 (code review 2026-07-01) — RouteId (appsettings.json → ReverseProxy:Routes) do ÚNICO
+// consumidor de email/name: o GET /api/v2/me. A injeção dessa PII é ESCOPADA a esta rota
+// (minimização de PII), diferente do X-Entra-OID (global — contrato existente da Story 2.3).
+const string MeRouteId = "me-get";
 
 // Claim names do Microsoft Identity Platform (AC-14 anti-hallucination — validados
 // contra docs oficiais "id-token-claims-reference" / "access-token-claims-reference").
@@ -32,6 +41,23 @@ const string EntraOidHeader = "X-Entra-OID";            // Story 2.3 AC-7 / ADE-
 //     story troubleshooting "Claim oid ausente").
 const string OidClaim = "oid";
 const string OidClaimUri = "http://schemas.microsoft.com/identity/claims/objectidentifier";
+
+// Story 3.5 (ADE-007 Inv 8) — claims padrão OIDC do email/name do cliente CIAM. Como no
+// oid, checamos o nome CURTO e a URI LONGA do mapeamento inbound do handler (defensivo p/
+// MapInboundClaims true/false).
+//
+// A-1 (code review 2026-07-01) — "preferred_username" foi REMOVIDO da cadeia de fallback do
+// email: é MUTÁVEL e a Microsoft diz explicitamente que "must not be used ... for
+// authorization" (id-token-claims-reference). O email do LINK vem SÓ do claim `email` e
+// SOMENTE quando `email_verified` for verdadeiro (o IdP atesta posse — OTP/social). Sem isso,
+// um atacante que apenas REGISTRA (sem provar posse) o email de uma vítima v1 no CIAM
+// dispararia o arm de LINK (UPDATE users SET entra_oid WHERE email AND entra_oid IS NULL),
+// tomando a conta da vítima. A verificação passa a estar NO CÓDIGO (defense-in-depth).
+const string EmailClaim = "email";
+const string EmailClaimUri = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress";
+const string EmailVerifiedClaim = "email_verified";
+const string NameClaim = "name";
+const string NameClaimUri = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name";
 
 // Quartas / "admin 100% workforce" + EPIC-004 Story 4.2 (ADE-009 Inv 1) — header de
 // shared secret (X-Gateway-Key) e os IDs dos clusters que o recebem. O gateway prova a
@@ -114,8 +140,12 @@ builder.Services
         // Isso impede spoofing de identidade — o cliente não consegue forjar o header.
         transformBuilderContext.AddRequestTransform(transformContext =>
         {
-            // Anti-spoofing: descarta qualquer X-Entra-OID de origem externa.
+            // Anti-spoofing: descarta qualquer X-Entra-OID/Email/Name de origem externa
+            // ANTES de (eventualmente) injetar os valores derivados do token. O cliente não
+            // consegue forjar identidade (Story 3.5 estende o anti-spoof a email/name).
             transformContext.ProxyRequest.Headers.Remove(EntraOidHeader);
+            transformContext.ProxyRequest.Headers.Remove(EntraEmailHeader);
+            transformContext.ProxyRequest.Headers.Remove(EntraNameHeader);
 
             var user = transformContext.HttpContext.User;
             if (user?.Identity?.IsAuthenticated == true)
@@ -129,12 +159,71 @@ builder.Services
                 {
                     transformContext.ProxyRequest.Headers.TryAddWithoutValidation(EntraOidHeader, oid);
                 }
+
+                // M-1 (code review 2026-07-01) — a injeção de email/name (PII) NÃO é mais feita
+                // aqui: era GLOBAL (todos os clusters recebiam a PII). Foi movida para um
+                // transform ESCOPADO à rota me-get (logo abaixo), o único consumidor. O
+                // anti-spoof (Remove dos 3 headers, no topo deste transform) PERMANECE global —
+                // nenhuma rota encaminha um X-Entra-Email/Name forjado pelo cliente. O
+                // X-Entra-OID continua injetado globalmente (contrato existente da Story 2.3).
             }
 
-            // NÃO logamos o token nem o oid em texto (AC-12 / CodeRabbit focus area —
-            // oid é PII de identidade; nunca aparece em log de aplicação).
+            // NÃO logamos o token nem o oid/email/name em texto (AC-12 / CodeRabbit focus
+            // area — identidade/PII; nunca aparece em log de aplicação).
             return ValueTask.CompletedTask;
         });
+
+        // -----------------------------------------------------------------------------
+        // Story 3.5 — injeção de identidade PII (email/name) ESCOPADA à rota me-get.
+        //
+        // M-1 (code review 2026-07-01, minimização de PII): o único consumidor de email/name é
+        // o GET /api/v2/me (resolve-or-provision). Escopamos por ROTA — e não por cluster, como
+        // o X-Gateway-Key — porque o cluster functions-f1 é COMPARTILHADO (purchase + me) e só
+        // /me precisa da PII. O X-Entra-OID permanece global (contrato Story 2.3); o anti-spoof
+        // (Remove) permanece global no transform de identidade acima. O callback de transforms
+        // roda por rota, então só ANEXAMOS este transform quando a rota é a me-get.
+        // -----------------------------------------------------------------------------
+        if (transformBuilderContext.Route?.RouteId is { } routeId &&
+            string.Equals(routeId, MeRouteId, StringComparison.OrdinalIgnoreCase))
+        {
+            transformBuilderContext.AddRequestTransform(transformContext =>
+            {
+                var user = transformContext.HttpContext.User;
+                if (user?.Identity?.IsAuthenticated == true)
+                {
+                    // A-1 (code review 2026-07-01) — o email do LINK vem SÓ do claim `email` e
+                    // SOMENTE quando `email_verified` for verdadeiro (aceita o bool true ou a
+                    // string "true"; bool.TryParse cobre ambos — o claim booleano do JWT chega
+                    // ao ClaimsPrincipal como string). Sem verificação → header OMITIDO → a
+                    // MeFunction cai em 422 (InsufficientClaims) = fail-closed. Isso fecha o
+                    // account-takeover: um oid que só REGISTROU o email de uma vítima (sem provar
+                    // posse) não dispara o arm de LINK por email. preferred_username foi removido
+                    // da cadeia (mutável; "must not be used for authorization").
+                    var emailVerified = bool.TryParse(
+                        user.FindFirst(EmailVerifiedClaim)?.Value, out var verified) && verified;
+                    var email = emailVerified
+                        ? user.FindFirst(EmailClaim)?.Value ?? user.FindFirst(EmailClaimUri)?.Value
+                        : null;
+                    if (!string.IsNullOrWhiteSpace(email))
+                    {
+                        transformContext.ProxyRequest.Headers.TryAddWithoutValidation(EntraEmailHeader, email);
+                    }
+
+                    // O NOME não é usado para autorização — só popula a coluna `name` NOT NULL no
+                    // arm de INSERT. Mantém o fallback short-claim/URI-longa; só o EMAIL do LINK
+                    // precisa ser verificado (A-1 item 2).
+                    var name = user.FindFirst(NameClaim)?.Value
+                        ?? user.FindFirst(NameClaimUri)?.Value;
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        transformContext.ProxyRequest.Headers.TryAddWithoutValidation(EntraNameHeader, name);
+                    }
+                }
+
+                // PII (email/name): injetada, NUNCA logada (Inv 8 flag (c)).
+                return ValueTask.CompletedTask;
+            });
+        }
 
         // Quartas + EPIC-004 Story 4.2 (ADE-009 Inv 1) — injeta X-Gateway-Key nas rotas
         // dos clusters CONFIÁVEIS (backend-v1, functions-f1, mcp-server). O escopo é
@@ -407,6 +496,7 @@ builder.Services
 // construída hands-on no Bloco 3 — ADE-007 Inv 5; decisão do owner: única role "Admin").
 const string AdminRole = "Admin";
 const string AdminOnlyPolicy = "AdminOnly";
+const string CiamOnlyPolicy = "CiamOnly";  // Story 3.5 / ADE-007 v1.3 Inv 8.2 — fence do /api/v2/me
 builder.Services.AddAuthorization(options =>
 {
     // Default (rotas v2 do cliente): basta estar autenticado (CIAM ou Admin).
@@ -428,6 +518,45 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy(AdminOnlyPolicy, policy =>
         policy.RequireAuthenticatedUser()
             .RequireRole(AdminRole));
+
+    // Story 3.5 (ADE-007 v1.3 Invariante 8.2) — FENCE CiamOnly: o /api/v2/me
+    // (resolve-or-provision) DEVE ser autorizado SÓ para o MUNDO CIAM (cliente), NUNCA para o
+    // Admin (workforce). Espelha a estratégia da AdminOnly — que discrimina por um requisito
+    // INDEPENDENTE DE ESQUEMA (RequireRole), não fixando o esquema.
+    //
+    // Por que NÃO basta fixar o esquema (AddAuthenticationSchemes(Ciam)): a rota /me também
+    // herda a DefaultPolicy do blanket MapReverseProxy().RequireAuthorization(), e o ASP.NET
+    // COMBINA as duas policies UNINDO os esquemas de autenticação — o AdminScheme volta pela
+    // DefaultPolicy e um token workforce autentica por ele, satisfazendo RequireAuthenticatedUser.
+    // Fixar o esquema, portanto, não exclui o admin.
+    //
+    // O discriminador correto é o ISSUER — a MESMA distinção que o PolicyScheme selector usa
+    // (ciamlogin.com vs login.microsoftonline.com). CiamOnly exige que a identidade autenticada
+    // tenha sido emitida pelo issuer CIAM: um token workforce (mesmo autenticado pelo esquema
+    // Admin via o merge) tem issuer login.microsoftonline.com → NÃO satisfaz → 403. Um token
+    // CIAM válido tem issuer ciamlogin.com → satisfaz → 200.
+    //
+    // POR QUE o fence importa: o transform que injeta X-Entra-OID é GLOBAL. Sem CiamOnly, um
+    // token de admin satisfaria /api/v2/me, o gateway injetaria o oid do OPERADOR como
+    // X-Entra-OID, e o resolve-or-provision criaria/vincularia uma linha de CLIENTE com a
+    // identidade do admin — corrompendo a base (e, pelo arm de LINK por email, potencialmente
+    // atando a linha de um cliente real ao operador).
+    options.AddPolicy(CiamOnlyPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(ctx =>
+            {
+                // O issuer aparece como o claim "iss" (surfaçado pelo handler) e, de forma
+                // redundante, taggeado em CADA claim validada (Claim.Issuer = issuer do token).
+                // Checamos os dois — só o mundo CIAM (ciamlogin.com) passa.
+                var user = ctx.User;
+                var iss = user.FindFirst("iss")?.Value;
+                if (!string.IsNullOrEmpty(iss))
+                {
+                    return iss.Contains(CiamIssuerHost, StringComparison.OrdinalIgnoreCase);
+                }
+                return user.Claims.Any(c =>
+                    c.Issuer.Contains(CiamIssuerHost, StringComparison.OrdinalIgnoreCase));
+            }));
 });
 
 // Observabilidade de borda (AC-11 / ADE-000 Inv 5) — App Insights se a connection
