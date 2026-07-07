@@ -8,7 +8,7 @@
 > **Importante (leia antes de começar):**
 > - **Este lab ASSUME as Quartas no ar** (gateway YARP, identidade CIAM + admin workforce, backend v1, SQL). A Final **ADICIONA** dois microsserviços ao MESMO ambiente e **reconfigura** os existentes para lerem segredos do cofre — **não** recria o gateway, a identidade, o SQL nem o Key Vault.
 > - **Cada aluno cria TUDO no próprio Azure / GitHub**: seus recursos, com **seus próprios nomes**. Os valores deste guia são **genéricos** (`<sufixo>`, `<seu-rg>`, `<gateway-fqdn>`) — preencha os seus na tabela de convenção.
-> - **O seu repositório NÃO é o passo zero.** A infra dos serviços novos e o cofre são criados/configurados **à mão** no Portal (Fases 1–9); criar o **repositório a partir do template (`Use this template`) + GitHub Actions é o ÚLTIMO passo de deploy** ([Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem)).
+> - **O seu repositório NÃO é o passo zero.** A infra dos serviços novos e o cofre são criados/configurados **à mão** no Portal (Fases 1–9); criar o **repositório por fork + habilitar o GitHub Actions é o ÚLTIMO passo de deploy** ([Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem)).
 
 > ⚠️ **A regra de ouro do dia:** no F5 o chatbot só tem **sentidos** (7 tools de leitura). Ele **não consegue** executar nenhuma ação — não existe uma ferramenta de escrita para o LLM chamar. Você vai **ver isso ao vivo** na [Fase 12](#fase-12--smokes-e-validação-o-coração-do-lab).
 
@@ -28,7 +28,7 @@ Há **duas divisões de trabalho** bem distintas — a mesma lógica das Oitavas
 | O quê | Como é feito | Onde |
 |---|---|---|
 | **INFRA nova + COFRE** (Container Apps McpServer/FlowEvents, SignalR, Managed Identities, **secrets no Key Vault**, App Settings novas do gateway, migração das chaves em claro) | **À mão, no Portal do Azure** | Portal (Fases 1–9) |
-| **CÓDIGO + FRONTEND** (imagens dos serviços, rebuild do gateway, bundle do front) | **GitHub Actions** (workflow único `Lab A Final`) | Seu repo do template (Fases 10–11) |
+| **CÓDIGO + FRONTEND** (imagens dos serviços, rebuild do gateway, bundle do front) | **GitHub Actions** (workflow único `Lab A Final`) | Seu repo (fork) (Fases 10–11) |
 
 O que muda em relação às Quartas:
 
@@ -92,7 +92,7 @@ Reuse os recursos das Quartas e crie os **novos** da Final. Anote os **seus** va
 - [ ] **Chave Gemini** pronta (`GEMINI_API_KEY`) — você a gera na [Fase 0](#fase-0--conta-google--chave-gemini-ai-studio) (conta Google dedicada + AI Studio). Modelo do lab: **`gemini-2.5-flash`** (ver [Apêndice B](#apêndice-b--modelo-gemini-real-vs-comentário)).
 - [ ] O valor do `Gateway__AdminSharedSecret` das Quartas anotado (ou um novo gerado).
 - [ ] A **connection string do SQL** (`FIFA2026Tickets`) e a **connection string do SignalR** (você cria o SignalR na [Fase 5](#fase-5--azure-signalr-free-service-mode-default)) — vão para o cofre.
-- [ ] Repositório NOVO **criado do template** do repo do evento (`Use this template` → **Include all branches**; a branch do lab é `lab-a-final`; ver [Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem)).
+- [ ] Repositório NOVO **criado por fork** do repo do evento (**Fork** → **todas as branches** — desmarque *Copy the `main` branch only*; a branch do lab é `lab-a-final`; ver [Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem)).
 
 ---
 
@@ -513,9 +513,9 @@ O backend v1 (Node/App Service) ainda tem a senha em claro — o `database.js` l
 
 ---
 
-## Fase 10 — Seu repositório do template + Variables/Secrets consolidados
+## Fase 10 — Seu repositório (fork) + Variables/Secrets consolidados
 
-Toda a infra e o cofre acima foram criados **à mão**. Agora vem a parte do **seu repositório** (criado do template — [Fase 11.1](#111-preparar-o-seu-repositório-tudo-pela-web-do-github)). No **seu repo** → **Settings → Secrets and variables → Actions**. Os **nomes** são **fixos** (iguais para todos); os **valores** são os **seus** (placeholders da convenção).
+Toda a infra e o cofre acima foram criados **à mão**. Agora vem a parte do **seu repositório** (criado por **fork** — [Fase 11.1](#111-preparar-o-seu-repositório-tudo-pela-web-do-github)). No **seu repo** → **Settings → Secrets and variables → Actions**. Os **nomes** são **fixos** (iguais para todos); os **valores** são os **seus** (placeholders da convenção).
 
 ### O que você preenche (caminho cofre — o desta aula)
 
@@ -550,7 +550,7 @@ No caminho cofre (o das aulas) você preenche só **2 Secrets** + as **Variables
 
 > 📌 **Modelo real:** o runtime do `gemini.ts` usa **`gemini-2.5-flash`** (o comentário de cabeçalho do arquivo ainda cita `2.0-flash` — inconsistência conhecida e inofensiva; ver [Apêndice B](#apêndice-b--modelo-gemini-real-vs-comentário)). Não precisa mexer no código.
 
-> ⚠️ **+ 8 Variables herdadas das Quartas (recrie no repo NOVO).** A Final acrescenta chatbot + rota `/flow` ao **mesmo** bundle das Quartas (não recria o front); Variables **não migram entre repositórios** ([Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem) manda criar um repo novo do template). Copie do seu repo das Quartas as Variables que o job `frontend` injeta **além da tabela acima**:
+> ⚠️ **+ 8 Variables herdadas das Quartas (recrie no repo NOVO).** A Final acrescenta chatbot + rota `/flow` ao **mesmo** bundle das Quartas (não recria o front); Variables **não migram entre repositórios** ([Fase 11](#fase-11--pr-do-lab--rodar-os-acao-na-ordem) manda criar um repo novo por fork). Copie do seu repo das Quartas as Variables que o job `frontend` injeta **além da tabela acima**:
 > - **login CIAM + admin:** `VITE_CIAM_AUTHORITY` · `VITE_CIAM_CLIENT_ID` · `VITE_ADMIN_TENANT_ID` · `VITE_ADMIN_CLIENT_ID` · `VITE_ADMIN_SCOPE`
 > - **gateway/backend/compra v2:** `GATEWAY_V2_URL` · `BACKEND_URL` · `FUNCTION_V2_URL`
 >
@@ -570,12 +570,12 @@ Este é o **último bloco de deploy**: o Actions só **constrói e publica** ima
 
 ### 11.1 Preparar o seu repositório (tudo pela web do GitHub)
 
-A branch do lab no repositório do evento (org **TFTEC**) chama-se **`lab-a-final`** — traz o workflow `lab-a-final.yml` + o código do F5/F6 (McpServer só-sentidos, FlowEvents 5 nós). O repo do evento (`TFTEC/copa-azure-final`) é um **repositório template** — você **não forka**, usa **"Use this template"**.
+A branch do lab no repositório do evento (org **TFTEC**) chama-se **`lab-a-final`** — traz o workflow `lab-a-final.yml` + o código do F5/F6 (McpServer só-sentidos, FlowEvents 5 nós). Você cria o **seu** repositório por **fork** do repo do evento (`TFTEC/copa-azure-final`) — o fork **preserva o histórico**, então o **PR `lab-a-final` → `main`** (o exercício, passo 2) funciona. *(Um repositório criado por "Use this template" desconecta as branches — `main` e `lab-a-final` nascem com históricos independentes e o PR não teria o que comparar.)*
 
-1. No repo do evento → **`Use this template` → Create a new repository** → ⚠️ marque **Include all branches** (sem isso a branch `lab-a-final` **não vem**) → **Owner** = sua conta → **Create repository**.
+1. No repo do evento → **Fork** → ⚠️ **desmarque** *Copy the `main` branch only* (sem isso a branch `lab-a-final` **não vem**) → **Owner** = sua conta → **Create fork**. Faça um fork **NOVO** — **não reuse** o fork das Quartas: **Sync fork** só atualiza a `main`, **não** traz branches novas.
 2. **Habilite o workflow na `main` do seu repositório:** abra um **Pull Request `lab-a-final` → `main`** (base = `main`, compare = `lab-a-final`) **no próprio repositório** e faça o **merge**. Esse PR é o "exercício" da aula — ele faz o `lab-a-final.yml` aparecer no Actions. (Você nunca dá PR no repo da TFTEC.)
 
-> 💡 **Template ≠ fork:** o seu repositório nasce **desacoplado** do repo do evento (sem vínculo de fork) — **zero risco** de abrir PR por engano contra o repo da TFTEC, e o **GitHub Actions já vem habilitado** por padrão (num fork ele viria **desativado** até você aprovar — vantagem didática do template). Por isso o **Include all branches** é obrigatório: é o que traz a `lab-a-final`.
+> ⚠️ **Habilite o Actions + mire o PR no SEU fork:** num fork o **GitHub Actions vem desativado** — abra a aba **Actions** do seu fork e clique em **"I understand my workflows, go ahead and enable them"** antes de rodar. E ao abrir o PR, o GitHub sugere a base no repo da **TFTEC** por padrão: **troque a base para a `main` do SEU fork** — nunca PR contra a TFTEC. (Desmarcar *Copy the `main` branch only* é o que traz a `lab-a-final`.)
 
 > 🖱️ **Disparo manual apenas:** o workflow só tem `workflow_dispatch` — nada roda até você clicar em **Run workflow** e escolher a ação. Antes do `frontend`, garanta **SCM Basic Auth `On`** no Web App do front e capture o publish profile **depois** disso.
 
@@ -798,7 +798,7 @@ Feche a aula com o **quiz** (Google Forms — link fornecido pelo facilitador na
 | F6 — Visão | Container App **FlowEvents** + **Azure SignalR** (Free/Default) + **Managed Identity** (Log Analytics Reader + leitura do KV) |
 | F6 — Gateway/Front | App Setting `FlowEventsUrl` + rota `/flow` (`VITE_FLOW_EVENTS_BASE_URL`) |
 | **Observabilidade** | App Insights + Log Analytics reusados: tracing por `correlationId`, Application Map, Workbook da compra, alertas 5xx/dead-letter (~US$0) |
-| Automação | Seu repo (do template): Variables + Secrets + workflow único **Lab A Final** (`mcp-server`/`gateway`/`flow-events`/`frontend`/`tudo`) |
+| Automação | Seu repo (fork): Variables + Secrets + workflow único **Lab A Final** (`function`/`mcp-server`/`gateway`/`flow-events`/`frontend`/`tudo`) |
 | Segurança | McpServer só-leitura por construção · chave Gemini nunca no bundle · segredos no Key Vault (MI) · X-Gateway-Key com igualdade estrutural · cache pós-auth |
 
 ---
